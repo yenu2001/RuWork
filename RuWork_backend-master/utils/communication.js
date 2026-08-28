@@ -1,5 +1,7 @@
 import mongoose from "mongoose";
 import Notification from "../models/notification.js";
+import { isTestEnvironment } from "./env.js";
+import { logger } from "./logger.js";
 
 export const PARTICIPANT_TYPES = ["student", "jobProvider"];
 export const NOTIFICATION_TYPES = [
@@ -74,11 +76,16 @@ export async function createNotification({ recipientType, recipientId, type, mes
 }
 
 export async function createNotificationSafely(details) {
-    if (mongoose.connection.readyState === 0 && Notification.create === originalNotificationCreate) return null;
+    // Same explicit Phase 10 gate as utils/admin.js: the test-only fallback requires the
+    // environment flag, so a dropped production connection cannot silently skip a Notification.
+    if (isTestEnvironment() && mongoose.connection.readyState === 0 && Notification.create === originalNotificationCreate) {
+        return null;
+    }
     try {
         return await createNotification(details);
     } catch (error) {
-        console.warn("Notification creation failed after a successful business action");
+        // Best-effort by design: the core Application/Message action already succeeded.
+        logger.warn("Notification creation failed after a successful business action", { name: error?.name });
         return null;
     }
 }

@@ -22,16 +22,22 @@ import {
     updateAdminSettings
 } from "../controllers/adminController.js";
 import { deleteReviewAsAdmin, listAdminReviews } from "../controllers/reviewController.js";
+import { changePassword, logoutAllSessions } from "../controllers/passwordController.js";
 import {
     authenticateToken,
     isAdmin,
     requireAdminAccount
 } from "../middlewears/authMiddleware.js";
+import { authRateLimiter } from "../middlewears/security.js";
 
 const adminRouter = express.Router();
 
-adminRouter.post("/login", loginAdmin);
+adminRouter.post("/login", authRateLimiter, loginAdmin);
 adminRouter.use(authenticateToken, isAdmin, requireAdminAccount);
+// Admin accounts are provisioned privately, so an authenticated change is offered but no
+// unauthenticated reset path exists for the Admin role.
+adminRouter.patch("/password", authRateLimiter, changePassword("admin"));
+adminRouter.post("/logout", logoutAllSessions("admin"));
 adminRouter.get("/dashboard", getAdminDashboard);
 adminRouter.get("/reviews", listAdminReviews);
 adminRouter.get("/reviews/:id", getAdminReview);

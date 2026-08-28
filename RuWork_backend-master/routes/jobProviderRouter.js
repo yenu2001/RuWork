@@ -12,17 +12,28 @@ import {
     verifyJobProviderEmail
 } from "../controllers/emailVerificationController.js";
 import {
+    changePassword,
+    logoutAllSessions,
+    requestPasswordReset,
+    resetPassword
+} from "../controllers/passwordController.js";
+import {
     authenticateToken,
     isJobProvider,
     requireApprovedJobProvider
 } from "../middlewears/authMiddleware.js";
+import { authRateLimiter, sensitiveRateLimiter } from "../middlewears/security.js";
 
 const JobProviderRouter = express.Router();
 
-JobProviderRouter.post("/",registerJobProvider);
-JobProviderRouter.post("/login",loginJobProvider);
-JobProviderRouter.get("/verify-email/:token", verifyJobProviderEmail);
-JobProviderRouter.post("/resend-verification", resendJobProviderVerification);
+JobProviderRouter.post("/", sensitiveRateLimiter, registerJobProvider);
+JobProviderRouter.post("/login", authRateLimiter, loginJobProvider);
+JobProviderRouter.get("/verify-email/:token", authRateLimiter, verifyJobProviderEmail);
+JobProviderRouter.post("/resend-verification", sensitiveRateLimiter, resendJobProviderVerification);
+JobProviderRouter.post("/password/forgot", sensitiveRateLimiter, requestPasswordReset("jobProvider"));
+JobProviderRouter.post("/password/reset", authRateLimiter, resetPassword("jobProvider"));
+JobProviderRouter.patch("/password", authenticateToken, isJobProvider, authRateLimiter, changePassword("jobProvider"));
+JobProviderRouter.post("/logout", authenticateToken, isJobProvider, logoutAllSessions("jobProvider"));
 JobProviderRouter.get("/profile", authenticateToken, isJobProvider, requireApprovedJobProvider, getMyCompanyProfile);
 JobProviderRouter.patch("/profile", authenticateToken, isJobProvider, requireApprovedJobProvider, updateMyCompanyProfile);
 JobProviderRouter.get("/dashboard", authenticateToken, isJobProvider, requireApprovedJobProvider, getProviderDashboard);

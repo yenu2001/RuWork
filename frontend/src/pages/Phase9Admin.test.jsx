@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ProtectedRoute from "../components/auth/ProtectedRoute";
@@ -102,7 +102,8 @@ describe("Phase 9 Admin workspace", () => {
     renderWithProviders(<AdminAccountsPage type="providers" />, { role: "admin" });
     expect(await screen.findByRole("heading", { name: "Current Company" })).toBeInTheDocument();
     expect(screen.getByText("jobs@current.lk")).toBeInTheDocument();
-    expect(screen.queryByText(/password/i)).not.toBeInTheDocument();
+    // Scoped to the account card: the shared header legitimately links to the password page.
+    expect(within(screen.getByRole("article")).queryByText(/password/i)).not.toBeInTheDocument();
   });
 
   it("supports account detail inspection without security fields", async () => {

@@ -64,8 +64,20 @@ export function createAccessToken(account, email) {
         firstName: account.firstName,
         lastName: account.lastName,
         email,
-        role: account.role
+        role: account.role,
+        // Phase 10 revocation claim: compared against the stored tokenVersion on every
+        // authenticated request so a password change or logout invalidates issued tokens.
+        tv: Number(account.tokenVersion || 0)
     }, jwtSecret, {
         expiresIn: process.env.JWT_EXPIRES_IN || "1d"
     });
+}
+
+/**
+ * A token is current only when its revocation claim matches the account's stored version. Tokens
+ * issued before Phase 10 carry no claim and are treated as version 0, which matches the default
+ * on existing accounts so no user is logged out by the upgrade itself.
+ */
+export function isTokenVersionCurrent(claims, account) {
+    return Number(claims?.tv || 0) === Number(account?.tokenVersion || 0);
 }

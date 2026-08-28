@@ -8,8 +8,14 @@ import {
     STUDENT_ROLE,
     UNIVERSITY_NAME,
     hasBasicEmailFormat,
-    isAllowedStudentEmail
+    isAllowedStudentEmail,
+    isTokenVersionCurrent
 } from "../utils/account.js";
+
+const REVOKED_TOKEN_RESPONSE = {
+    error: "This session is no longer valid. Please sign in again.",
+    code: "TOKEN_REVOKED"
+};
 
 export function authenticateToken(req, res, next) {
     const authorizationHeader = req.get("Authorization") || "";
@@ -49,6 +55,9 @@ export async function requireAdminAccount(req, res, next) {
         if (!admin || admin.role !== ADMIN_ROLE) {
             return res.status(403).json({ error: "An authoritative Admin account is required", code: "ADMIN_NOT_AUTHORIZED" });
         }
+        if (!isTokenVersionCurrent(req.user, admin)) {
+            return res.status(401).json(REVOKED_TOKEN_RESPONSE);
+        }
         req.adminAccount = admin;
         return next();
     } catch (error) {
@@ -71,6 +80,10 @@ export async function requireEligibleRuhunaStudent(req, res, next) {
                 error: "An approved and verified University of Ruhuna Student account is required",
                 code: "STUDENT_NOT_ELIGIBLE"
             });
+        }
+
+        if (!isTokenVersionCurrent(req.user, student)) {
+            return res.status(401).json(REVOKED_TOKEN_RESPONSE);
         }
 
         req.studentAccount = student;
@@ -97,6 +110,10 @@ export async function requireApprovedJobProvider(req, res, next) {
                 error: "An approved and verified Job Provider account is required",
                 code: "JOB_PROVIDER_NOT_ELIGIBLE"
             });
+        }
+
+        if (!isTokenVersionCurrent(req.user, provider)) {
+            return res.status(401).json(REVOKED_TOKEN_RESPONSE);
         }
 
         req.jobProviderAccount = provider;

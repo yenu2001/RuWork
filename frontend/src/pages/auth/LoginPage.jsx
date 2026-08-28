@@ -21,6 +21,7 @@ const configs = {
     validateEmail: isRuhunaEmail,
     dashboard: "/student/dashboard",
     registration: "/register/student",
+    forgotPassword: "/forgot-password/student",
     accountType: "student"
   },
   provider: {
@@ -34,6 +35,7 @@ const configs = {
     validateEmail: isBasicEmail,
     dashboard: "/provider/dashboard",
     registration: "/register/provider",
+    forgotPassword: "/forgot-password/provider",
     accountType: "jobProvider"
   },
   admin: {
@@ -94,6 +96,11 @@ export default function LoginPage({ role }) {
         {requestError && <Alert>{requestError}</Alert>}
         <FormField id={`${role}-email`} label={config.emailLabel} type="email" autoComplete="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} placeholder={config.emailPlaceholder} error={errors.email} disabled={isSubmitting} />
         <PasswordField id={`${role}-password`} label="Password" autoComplete="current-password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} error={errors.password} disabled={isSubmitting} />
+        {config.forgotPassword && (
+          <p className="-mt-2 text-right text-sm">
+            <Link to={config.forgotPassword} className="font-bold text-brand-700 underline-offset-4 hover:underline">Forgot your password?</Link>
+          </p>
+        )}
         <Button type="submit" isLoading={isSubmitting} className="mt-1 w-full">Log in</Button>
       </form>
       {role !== "admin" && (

@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { SESSION_EXPIRED_EVENT } from "../services/api";
 import { authService } from "../services/authService";
 import { clearStoredAuth, readStoredAuth, storeAuth } from "../utils/authStorage";
 import { decodeAccessToken } from "../utils/token";
@@ -38,9 +39,33 @@ export function AuthProvider({ children }) {
     return user;
   }, []);
 
-  const logout = useCallback(() => {
+  /**
+   * Best-effort server-side revocation first, then always clear locally. A failed or unreachable
+   * revocation call must never leave the user apparently signed in.
+   */
+  const logout = useCallback(async () => {
+    const role = auth?.user?.role;
+    if (role) await authService.logout(role).catch(() => {});
     clearStoredAuth();
     setAuth(null);
+  }, [auth?.user?.role]);
+
+  /** Replace the session in place after a password change returns a freshly signed token. */
+  const replaceToken = useCallback((token) => {
+    const user = decodeAccessToken(token);
+    if (!user) return null;
+    const nextAuth = { token, user };
+    storeAuth(nextAuth);
+    setAuth(nextAuth);
+    return user;
+  }, []);
+
+  // The API client clears storage when the server rejects a revoked token; mirror that here so
+  // protected routes redirect instead of rendering a workspace that can no longer load data.
+  useEffect(() => {
+    function handleExpired() { setAuth(null); }
+    window.addEventListener(SESSION_EXPIRED_EVENT, handleExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, handleExpired);
   }, []);
 
   const value = useMemo(() => ({
@@ -49,8 +74,9 @@ export function AuthProvider({ children }) {
     token: auth?.token || null,
     user: auth?.user || null,
     login,
-    logout
-  }), [auth, isRestoring, login, logout]);
+    logout,
+    replaceToken
+  }), [auth, isRestoring, login, logout, replaceToken]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

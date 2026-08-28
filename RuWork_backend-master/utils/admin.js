@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import AdminAudit from "../models/adminAudit.js";
 import PlatformSetting from "../models/platformSetting.js";
+import { isTestEnvironment } from "./env.js";
 
 export const ACCOUNT_MODERATION_STATUSES = ["active", "suspended"];
 export const CONTENT_MODERATION_STATUSES = ["visible", "hidden"];
@@ -23,6 +24,17 @@ export const SETTING_FIELDS = Object.keys(SETTINGS_DEFAULTS);
 
 const originalAuditCreate = AdminAudit.create;
 const originalSettingsFindOne = PlatformSetting.findOne;
+
+/**
+ * Phase 10 replacement for the former `mongoose.connection.readyState === 0` short-circuit.
+ * The fallback now requires the explicit test environment gate, so a dropped production
+ * connection surfaces as a real failure instead of silently skipping an audit or returning
+ * default Settings. It still requires the model method to be un-stubbed, so a test that installs
+ * its own double always exercises the real code path.
+ */
+function useTestFallback(model, method, original) {
+    return isTestEnvironment() && mongoose.connection.readyState === 0 && model[method] === original;
+}
 
 export class AdminInputError extends Error {}
 
@@ -80,12 +92,12 @@ export async function createAdminAudit({ adminId, action, entityType, entityId, 
     if (!AUDIT_ACTIONS.includes(action) || !AUDIT_ENTITY_TYPES.includes(entityType)) {
         throw new Error("Authoritative audit classification is invalid");
     }
-    if (mongoose.connection.readyState === 0 && AdminAudit.create === originalAuditCreate) return null;
+    if (useTestFallback(AdminAudit, "create", originalAuditCreate)) return null;
     return AdminAudit.create({ adminId, action, entityType, entityId, metadata });
 }
 
 export async function getPlatformSettings() {
-    if (mongoose.connection.readyState === 0 && PlatformSetting.findOne === originalSettingsFindOne) {
+    if (useTestFallback(PlatformSetting, "findOne", originalSettingsFindOne)) {
         return { ...SETTINGS_DEFAULTS };
     }
     const settings = await PlatformSetting.findOne({ singletonKey: "platform" }).lean().exec();

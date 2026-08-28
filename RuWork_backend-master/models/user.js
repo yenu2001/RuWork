@@ -118,6 +118,26 @@ const userSchema = new mongoose.Schema({
         ref: "Admin",
         select: false
     },
+    passwordResetTokenHash: {
+        type: String,
+        select: false
+    },
+    passwordResetExpiresAt: {
+        type: Date,
+        select: false
+    },
+    passwordResetRequestedAt: {
+        type: Date,
+        select: false
+    },
+    passwordChangedAt: {
+        type: Date
+    },
+    tokenVersion: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
     role: {
         type: String,
         enum: [STUDENT_ROLE],

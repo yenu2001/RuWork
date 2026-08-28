@@ -27,14 +27,18 @@ RuWork_backend-master/
 |  |- adminController.js
 |  |- applicationController.js
 |  |- emailVerificationController.js
+|  |- healthController.js
 |  |- jobController.js
 |  |- jobProviderController.js
 |  |- messageController.js
 |  |- notificationController.js
+|  |- passwordController.js
 |  |- reviewController.js
 |  `- userController.js
 |- middlewears/
-|  `- authMiddleware.js
+|  |- authMiddleware.js
+|  |- errorHandler.js
+|  `- security.js
 |- models/
 |  |- admin.js
 |  |- adminAudit.js
@@ -57,6 +61,7 @@ RuWork_backend-master/
 |  `- userRouter.js
 |- scripts/
 |  |- createAdmin.js
+|  |- seedDemo.js
 |  `- README.md
 |- utils/
 |  |- account.js
@@ -65,7 +70,10 @@ RuWork_backend-master/
 |  |- communication.js
 |  |- emailService.js
 |  |- emailVerification.js
+|  |- env.js
 |  |- job.js
+|  |- logger.js
+|  |- password.js
 |  |- ratingAggregates.js
 |  `- review.js
 |- index.js
@@ -118,6 +126,9 @@ The misspelled `middlewears/` directory is retained for compatibility.
 - Admin-only paginated, filterable, read-only `GET /api/admin/audits`.
 - Eligible-Student/approved-Provider `GET /api/messages/conversations`, `GET /api/messages/conversations/:applicationId`, `POST /api/messages`, and `GET /api/messages/unread-count`.
 - Eligible-Student/approved-Provider `GET /api/notifications`, `GET /api/notifications/unread-count`, `PATCH /api/notifications/read-all`, and `PATCH /api/notifications/:id/read`.
+- Unauthenticated `GET /api/health` liveness/readiness probe.
+- Student and Provider `POST /api/{users,jobProviders}/password/forgot` and `POST /api/{users,jobProviders}/password/reset`.
+- Authenticated `PATCH /api/{users,jobProviders,admin}/password` and `POST /api/{users,jobProviders,admin}/logout`. Admin has change and logout only; no unauthenticated Admin reset exists.
 
 ### Functionality already present
 
@@ -133,9 +144,9 @@ The misspelled `middlewears/` directory is retained for compatibility.
 
 ### Incomplete functionality
 
-- No password-reset, password-change, or access-token revocation strategy.
-- No health endpoint or integration tests against a live MongoDB/SMTP environment.
-- Production security hardening (CORS/Helmet/rate limiting, centralized error handling, logging) and optional email/realtime communication delivery remain deferred to Phase 10. Role workspaces, database messaging, in-app notifications, and the full Admin workspace — account/Job/Review moderation, expanded statistics, Settings, and audit records — are complete.
+- Password reset, password change, and access-token revocation are implemented in Phase 10. There is still no refresh-token or cookie-session architecture; the bearer token remains the only credential.
+- A health endpoint exists. Integration tests against a live MongoDB/SMTP environment have still not been run, because no external credentials are configured in this repository.
+- Optional email event delivery and realtime/WebSocket communication remain intentionally unimplemented. Role workspaces, database messaging, in-app notifications, the full Admin workspace, and Phase 10 production hardening are complete.
 
 ### Historical Phase 1 findings (resolved)
 
@@ -261,6 +272,17 @@ Phase 9 extends four existing schemas with a small, uniform, reversible moderati
 
 Every moderation state is reversible and no moderation path deletes a record. Suspended accounts, hidden Jobs, and hidden Reviews retain their Applications, Messages, Reviews, and history intact.
 
+### Credential and session fields
+
+Phase 10 extends the three account schemas with a small, uniform credential block:
+
+- `User`, `JobProvider`, and `Admin` gain `tokenVersion` (default `0`) and `passwordChangedAt`.
+- `User` and `JobProvider` additionally gain `passwordResetTokenHash`, `passwordResetExpiresAt`, and `passwordResetRequestedAt`, all excluded from normal queries exactly like the Phase 2 verification internals.
+
+`tokenVersion` is the revocation counter. Every issued JWT embeds it as a `tv` claim, and the authoritative account guards compare the claim against the stored value on each request. Incrementing it invalidates every token already issued for that account. Tokens minted before Phase 10 carry no claim and are read as version `0`, which matches the default on existing accounts, so the upgrade signs nobody out.
+
+Reset tokens follow the Phase 2 verification pattern: 32 random bytes delivered only in the emailed link, stored solely as a SHA-256 hash with a bounded expiry, consumed on first successful use.
+
 ### Job
 
 The completed Job model preserves `hourlyRate` and the existing field names while adding an immutable required `jobProviderId`, centralized category enum, normalized unique skill tags, scope, hourly/fixed `budgetType`, fixed `budget`, internal normalized `priceAmount`, immutable `LKR` currency, and the minimal `draft | open | closed` lifecycle. Conditional validation requires exactly the relevant positive primary price. Phase 7 now maintains the nullable `averageRating` and zero-based `reviewCount` from active Review documents. Targeted compound and text indexes support Provider ownership, availability/deadline, category/location, price sorting, and bounded MongoDB text search.
@@ -337,9 +359,37 @@ Providers are not subject to the University email-domain rule.
 - A Student receives normal access only if email/university/role eligibility remains valid, `isEmailVerified` is true, `accountStatus` is `approved`, and the account is not suspended by Admin moderation.
 - Provider login uses `companyEmail`, verifies the password, and requires `isEmailVerified = true`, `accountStatus = approved`, and no Admin suspension.
 - Admin login is separate and has no public Admin signup.
-- Issued JWTs include the account ID, canonical email, and role, have a configured expiry, and are signed with `process.env.JWT_SECRET`.
-- Protected routes reject absent, malformed, expired, or invalid tokens with `401`.
+- Issued JWTs include the account ID, canonical email, role, and the `tv` revocation claim, have a configured expiry, and are signed with `process.env.JWT_SECRET`.
+- Protected routes reject absent, malformed, expired, or invalid tokens with `401`. A token whose `tv` claim no longer matches the account returns `401` with `TOKEN_REVOKED`.
 - Role guards return `403` for an authenticated but unauthorized account.
+
+### Password lifecycle and revocation
+
+```text
+Change password (authenticated)
+-> verify current password
+-> enforce strength rules and reject reuse
+-> hash and store
+-> increment tokenVersion (revokes all issued tokens)
+-> return one freshly signed token so the calling device stays signed in
+
+Forgot password (unauthenticated, Student/Provider only)
+-> always answer with one generic body
+-> issue a hashed, expiring, single-use token only for an existing, non-suspended account
+   that is outside its cooldown
+-> email the raw token in the reset link
+
+Reset password
+-> look the account up by token hash with the expiry enforced in the query
+-> enforce strength rules
+-> hash and store, consume the token, increment tokenVersion
+-> return no token; the caller re-authenticates through the normal login rules
+
+Sign out
+-> increment tokenVersion, ending every session for that account
+```
+
+Admin accounts are provisioned privately, so they support authenticated change and sign-out but expose no unauthenticated reset path.
 
 ## 5. Admin approval flow
 
@@ -474,7 +524,7 @@ The seven entries above are the Admin navigation. Phase 9 also adds detail and a
 7. **Reviews and ratings (completed):** completed-engagement review rules, per-Job and mandatory Provider aggregates, lightweight job-card summaries, paginated Job Details comments, Student creation/deletion, focused Provider/Admin views, moderation, and tests.
 8. **Messaging and notifications (completed):** Application-authorized direct Messages, explicit Student contact sharing, bounded conversation/history APIs, persistent lifecycle/Message Notifications, read/unread state and badges, shared responsive role pages, and tests. Realtime and email delivery remain optional later enhancements.
 9. **Full Admin workspace (completed):** reversible Student/Provider/Job/Review moderation beyond the existing Registration Review workflow, expanded authoritative statistics, allowlisted business-policy Settings, immutable audit records, strict Admin-only authorization on every endpoint, a responsive Admin workspace, and tests.
-10. **Production hardening and live integration:** validation consistency, centralized error handling, password reset/change if required, access-token revocation, CORS/Helmet/rate limiting, logging without secrets, a health endpoint, replacing the `mongoose.connection.readyState === 0` test-support short-circuit in `utils/admin.js` with injected test doubles or an explicit environment gate, security/a11y/performance testing, deployment/live MongoDB/SMTP configuration and integration testing, seed/demo tooling, and documentation.
+10. **Production hardening (completed):** validated fail-fast environment configuration, centralized error handling with safe responses, password change/reset, access-token revocation and sign-out, CORS allowlisting, security headers, tiered rate limiting, redacting logging, a health endpoint, an explicit environment gate replacing the `mongoose.connection.readyState === 0` test-support short-circuit, route-level code splitting, accessibility improvements, demo seed tooling, and tests. Live MongoDB/SMTP integration testing and an actual deployment remain outstanding because no external credentials or hosting environment are configured; see the Phase 10 limitations below.
 
 ## Phase 1 verification criteria (completed)
 
@@ -672,13 +722,108 @@ The seven entries above are the Admin navigation. Phase 9 also adds detail and a
 - The Audit Trail is reachable from the Dashboard and Settings rather than from the seven-item Admin navigation, to keep the documented navigation stable.
 - Admin actions are audited, but there is no export, retention policy, or tamper-evident chaining over audit records.
 
-## Technology and language audit after Phase 9
+## Phase 10 implementation status
+
+### Environment and startup
+
+- Added `utils/env.js` as the single validated source for runtime configuration: environment mode, port, client URL, CORS allowlist, JSON body limit, proxy trust, rate-limit switch, and SMTP presence.
+- `assertEnvironment()` runs before the database connection and fails fast. In every environment `MONGODB_URI` and `JWT_SECRET` are required; in production it additionally requires a `JWT_SECRET` of at least 32 characters, a configured origin allowlist with no wildcard and an explicit scheme on every entry, complete SMTP configuration, and that the test gate is off. Problems are reported by name only — no configured value is ever echoed into the failure output.
+- `index.js` now logs through the redacting logger, registers connection `disconnected`/`reconnected`/`error` handlers so a mid-flight outage is visible, and closes the server and database cleanly on `SIGINT`/`SIGTERM`.
+- `npm start` runs `node index.js`; the nodemon watcher moved to `npm run dev`, and `nodemon` moved from runtime to development dependencies.
+
+### Security middleware
+
+- Added `middlewears/security.js`. Helmet sets the security headers with a maximally restrictive policy appropriate to a JSON-only API (`default-src 'none'`, no framing, no base URI, no form action), `no-referrer`, same-site resource policy, and HSTS in production only. `x-powered-by` is disabled.
+- CORS is a strict allowlist derived from `CORS_ORIGINS` or `CLIENT_URL`, restricted to the methods and headers the client actually uses. Requests carrying no `Origin` are allowed because CORS is a browser protection rather than an authorization boundary; authorization remains the JWT and role guards.
+- Three rate-limit tiers: a broad API limiter, a strict limiter on credential checks that does not count successful logins, and a tighter limiter on operations that send email or create accounts. The health endpoint is exempt so an orchestrator can always probe it. Limits are disabled under the test gate so the suite stays deterministic.
+- `trust proxy` is configurable so rate limiting sees the real client address behind a load balancer.
+
+### Validation consistency and centralized error handling
+
+- Added `middlewears/errorHandler.js`. `requireObjectBody` rejects any `POST`/`PATCH`/`PUT` body that parsed into an array, string, number, or null before a controller can see it. JSON bodies are bounded by `JSON_BODY_LIMIT` (100 kB by default).
+- A terminal error handler maps malformed JSON to `400`, oversized bodies to `413`, Mongoose validation to `400`, cast failures to `400`, and duplicate keys to `409`. Anything else returns one generic message plus a correlation reference; the stack trace is logged, never returned, in any environment. A `404` handler answers unknown routes as JSON rather than HTML.
+- Pagination input hardening from Phase 9 is unchanged and still rejects non-scalar values.
+
+### Logging
+
+- Added `utils/logger.js`. It redacts by key name (any key containing password, token, secret, auth, cookie, hash, credential, connection string, or API key) and, as defence in depth, by value shape — anything resembling a JWT, a Mongo connection string, or a long hex token is masked wherever it appears, including inside free text. Output is depth- and size-bounded, JSON in production and readable otherwise, and silent under the test gate.
+- Every runtime `console.*` call in the backend was replaced by the logger. Passwords, password hashes, JWTs, reset tokens, verification tokens, Mongo credentials, and SMTP secrets are never logged.
+
+### Password lifecycle and token revocation
+
+- Added `utils/password.js` and `controllers/passwordController.js` implementing the flows documented in §4.
+- Password change requires the current password, enforces the existing strength rules, rejects reuse of the current password, rejects any unexpected body field, revokes all issued tokens, and returns one freshly signed token so the calling device is not signed out by its own action.
+- Forgot-password answers with a single generic body for every outcome — unknown address, suspended account, active cooldown, and successful send are indistinguishable — so the endpoint cannot be used to enumerate registered accounts. A failed email send rolls the token back and still answers generically.
+- Reset consumes a single-use hashed token whose expiry is enforced in the lookup query, revokes all issued tokens, and deliberately returns no access token so the caller re-enters the normal login rules that re-check verification, approval, and moderation state.
+- Sign-out increments the revocation counter, ending every session for that account.
+- Revocation is enforced inside the three authoritative guards that already re-read the account, so it costs no additional database round trip and automatically covers every protected route, including the Message and Notification participant guard.
+
+### Health endpoint
+
+- `GET /api/health` reports status, uptime, coarse database connection state, and whether SMTP is configured. It returns `503` when the database is not connected so an orchestrator can take the instance out of rotation, and it exposes no connection string, credential, host name, or version.
+
+### Test-support gate
+
+- The `mongoose.connection.readyState === 0` short-circuit carried since Phase 9 is replaced by an explicit `isTestEnvironment()` gate in both `utils/admin.js` and `utils/communication.js`. The fallback now requires `NODE_ENV=test` or `RUWORK_TEST_MODE=true`, is forced off whenever `NODE_ENV=production`, and still requires the model method to be un-stubbed so any test installing its own double exercises the real path.
+- `tests/testEnv.js` is loaded through `node --import` before any test module, so the gate is set before configuration is first read. A dropped production connection now surfaces as a real failure instead of silently skipping an audit write or returning default Settings.
+
+### Frontend hardening and accessibility
+
+- Added Forgot Password (Student and Provider), Reset Password, and an authenticated Change Password page shared by all three roles, plus sign-in links and a header entry.
+- Sign-out now calls the API's revocation endpoint first and clears local state regardless of the result, so an unreachable API can never leave a user apparently signed in.
+- The shared Axios client clears the session and announces expiry when the API rejects a stored token, with an explicit exception for the current-password check on password change, so a mistyped current password reports the error instead of signing the user out.
+- Added a keyboard skip link to a focusable main landmark. Form controls remain natively labelled, and invalid fields expose `aria-invalid` with a programmatically associated error message.
+- Demo seeding through `npm run seed:demo` creates a namespaced, idempotent Student, Provider, two Jobs, two Applications, and one Review. It refuses to run when `NODE_ENV` is production, requires an explicit `DEMO_PASSWORD`, never prints that password, and touches only its own records.
+
+### Performance
+
+- Route-level code splitting keeps the public entry — landing, sign-in, browse, and Job Details — in the initial bundle and lazily loads the registration forms and the Student, Provider, and Admin workspaces. A Student never downloads the Admin workspace.
+- The main chunk fell from 517.68 kB (143.73 kB gzipped) to 376.92 kB (119.11 kB gzipped), and Vite's 500 kB chunk-size advisory no longer appears. No functional behaviour changed.
+
+### Verification
+
+- The complete suites pass **118/118 backend tests** and **94/94 frontend tests across 21 test files**. Phase 10 contributes 13 focused backend tests and 8 focused frontend tests, and extends the existing Axios client test. Two Phase 2/6/9 assertions were adjusted to the intentionally changed call shapes; none of their original behavioural intent was weakened.
+- All 57 backend JavaScript files pass `node --check`, and importing `index.js` resolves every module. Frontend ESLint passes with no errors or warnings and the production Vite build succeeds. Both `npm audit` runs report zero vulnerabilities; `npm audit fix` was not run.
+- A temporary in-memory API exercised the complete browser flow without touching MongoDB. Verified at 1440×900 desktop and 390×844 mobile: sign-in; a wrong current password reporting the server's message while keeping the session; a successful change rotating the stored token and keeping the device signed in; the rotated token still authorised against a protected endpoint; a stale revocation claim clearing the session and redirecting to sign-in on a real page load; client-side reset-address validation; the generic non-enumerating forgot-password confirmation; a successful reset; sign-in with the new password; and sign-out clearing the session. Mobile navigation exposed the new Password destination, all password controls were labelled and keyboard reachable, invalid submissions exposed `aria-invalid` with associated error text, and every page reported no horizontal overflow, no Vite error overlay, and no console errors. The temporary API file was removed after verification, matching Phases 6–9.
+- Browser verification found one real defect, which was fixed and covered by a regression test: the new 401 interceptor initially signed a user out when they merely mistyped their current password.
+
+### Deliberate Phase 10 boundaries
+
+- No payment processing of any kind was added.
+- No WebSocket or realtime infrastructure was added; the plan does not require it.
+- No message attachments, message editing or deletion, and no Admin access to private Student–Provider Message content.
+- No refresh-token or cookie-session architecture was invented; the bearer token plus server-side revocation is the whole model.
+- No dependency was upgraded merely because a newer version exists, and `npm audit fix` was not run.
+- No historical Job, Application, Review, Message, or audit record is deleted by any Phase 10 code path.
+
+### Production configuration requirements
+
+- Required in every environment: `MONGODB_URI`, `JWT_SECRET`.
+- Required additionally in production: a `JWT_SECRET` of at least 32 characters; `CLIENT_URL` or `CORS_ORIGINS` with explicit schemes and no wildcard; and complete SMTP configuration (`EMAIL_HOST`, `EMAIL_USER`, `EMAIL_PASSWORD`, `EMAIL_FROM`). `RUWORK_TEST_MODE` must not be set.
+- Set `NODE_ENV=production` to enable HSTS, JSON logging, strict startup validation, and to force the test gate off. Set `TRUST_PROXY` when running behind a proxy or load balancer so rate limiting sees real client addresses.
+- The frontend is a single-page application: the host must rewrite unknown paths to `index.html` so deep links such as `/reset-password?token=…` resolve. Build it with `VITE_API_BASE_URL` pointing at the public API, and add that site origin to the backend allowlist.
+- Provision the first Admin with `npm run create-admin`. Use `npm run seed:demo` only outside production.
+- Both `.env` files remain untracked and ignored; only `.env.example` files are committed, and they contain no values.
+
+### Known Phase 10 limitations
+
+- **No live MongoDB, SMTP, or deployment verification was performed.** No external credentials or hosting environment are configured in this repository. Startup validation, connection-failure handling, SMTP failure handling, and email generation are verified structurally and by automated tests; actual delivery, live aggregation, and a real deployment are not claimed.
+- Rate limiting uses the default in-memory store, which is per-instance. A multi-instance deployment needs a shared store to enforce one global limit.
+- Access tokens remain in `sessionStorage` and stay readable by JavaScript, so XSS exposure is unchanged. Revocation limits the damage window but does not remove it; a cookie-based session remains the larger future change.
+- Revocation is enforced in the account guards, so a revoked token is rejected on the next request rather than instantly at the network edge.
+- Driver-level connection errors logged at startup can contain a database host name. Credentials and connection strings are redacted, and these messages never reach an HTTP response.
+- The merged registration queue still reads `offset + limit` documents per collection and keeps its page bound of 200.
+- Audit records still have no export, retention policy, or tamper-evident chaining.
+- Accessibility was verified by structural and keyboard checks rather than a full screen-reader or automated WCAG audit; no formal conformance level is claimed.
+
+## Technology and language audit after Phase 10
 
 - Application code uses JavaScript and JSX only. CSS/Tailwind styling, JSON configuration, Markdown documentation, environment files, and static SVG/PNG/PDF assets are supporting formats rather than additional application languages.
 - No `.ts`, `.tsx`, `.py`, `.java`, `.cs`, `.php`, `.go`, `.rb`, or `.rs` application source exists outside dependency/build directories.
 - Frontend runtime stack: React, Vite, Tailwind CSS, React Router, Axios, and Lucide React. Frontend development/testing: ESLint, Vitest, React Testing Library, jsdom, Tailwind/Vite React plugins, and React type metadata used by editor/tooling.
-- Backend runtime stack: Node.js, Express, MongoDB/Mongoose, bcrypt, JSON Web Token, Nodemailer, dotenv, and the existing body-parser compatibility dependency. Nodemon is the existing development runner even though it is currently listed in runtime dependencies.
-- No new npm dependency was required for Phase 8 or Phase 9. The Admin workspace — moderation dialogs, badges, filters, pagination, Settings toggles, and the Audit Trail — uses React, native semantic controls, existing Tailwind utilities, and existing Lucide icons.
-- Both npm dependency audits report zero known vulnerabilities, and all 47 backend JavaScript files pass `node --check`.
-- `body-parser` is largely redundant with modern Express JSON parsing and `nodemon` would normally be a development dependency, but both predate Phase 6 and remain in use by the existing backend configuration; removing or relocating them was outside this incremental phase.
+- Backend runtime stack: Node.js, Express, MongoDB/Mongoose, bcrypt, JSON Web Token, Nodemailer, dotenv, and the Phase 10 security middleware — Helmet, CORS, and express-rate-limit. Nodemon is now correctly a development dependency.
+- Phase 10 added exactly three runtime dependencies — `helmet`, `cors`, and `express-rate-limit` — the canonical implementations of the security headers, origin allowlisting, and rate limiting this phase requires. No other dependency was added, and none was upgraded merely because a newer version exists. Phases 8 and 9 added none.
+- `body-parser` was removed. It had been redundant with `express.json()` since Express 5, and Phase 10's bounded body parsing replaced its last use. No frontend dependency changed.
+- Both npm dependency audits report zero known vulnerabilities, and all 57 backend JavaScript files pass `node --check`.
+- The long-standing `body-parser` redundancy and the misplaced `nodemon` runtime dependency, both flagged since Phase 6, are resolved in Phase 10.
 - The repository remains compliant with the approved straightforward JavaScript/JSX + React/Vite/Tailwind/Axios frontend and JavaScript + Node/Express + MongoDB/Mongoose backend architecture.

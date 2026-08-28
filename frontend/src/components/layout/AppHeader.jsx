@@ -73,8 +73,8 @@ export default function AppHeader() {
     return <>{link.label}<UnreadBadge count={count} label={link.label} /></>;
   }
 
-  function logout() {
-    auth.logout();
+  async function logout() {
+    await auth.logout();
     navigate("/", { replace: true });
   }
 
@@ -89,9 +89,12 @@ export default function AppHeader() {
             </NavLink>
           ))}
         </nav>
-        <div className="hidden md:block">
+        <div className="hidden items-center gap-3 md:flex">
           {auth.isAuthenticated ? (
-            <Button variant="secondary" onClick={logout}><LogOut className="size-4" aria-hidden="true" /> Log out</Button>
+            <>
+              <Link to="/account/password" className="text-sm font-semibold whitespace-nowrap text-ink-600 transition hover:text-brand-700">Password</Link>
+              <Button variant="secondary" onClick={logout}><LogOut className="size-4" aria-hidden="true" /> Log out</Button>
+            </>
           ) : (
             <Button as={Link} to="/login/student">Log in</Button>
           )}
@@ -104,8 +107,13 @@ export default function AppHeader() {
         <nav className="border-t border-slate-200 bg-white px-5 py-4 md:hidden" aria-label="Mobile application navigation">
           <div className="mx-auto grid max-w-lg gap-2">
             {links.map((link) => <Link key={link.to} to={link.to} onClick={() => setMobileOpen(false)} className="rounded-xl px-3 py-3 text-sm font-semibold text-ink-800 hover:bg-brand-50 hover:text-brand-700">{linkContent(link)}</Link>)}
-            <div className="mt-2 border-t border-slate-200 pt-4">
-              {auth.isAuthenticated ? <Button variant="secondary" onClick={logout} className="w-full">Log out</Button> : <Button as={Link} to="/login/student" className="w-full">Log in</Button>}
+            <div className="mt-2 grid gap-2 border-t border-slate-200 pt-4">
+              {auth.isAuthenticated ? (
+                <>
+                  <Link to="/account/password" onClick={() => setMobileOpen(false)} className="rounded-xl px-3 py-3 text-sm font-semibold text-ink-800 hover:bg-brand-50 hover:text-brand-700">Password</Link>
+                  <Button variant="secondary" onClick={logout} className="w-full">Log out</Button>
+                </>
+              ) : <Button as={Link} to="/login/student" className="w-full">Log in</Button>}
             </div>
           </div>
         </nav>

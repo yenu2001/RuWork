@@ -134,6 +134,26 @@ const JobProviderSchema = new mongoose.Schema({
     password: {
         type: String,
         required: true
+    },
+    passwordResetTokenHash: {
+        type: String,
+        select: false
+    },
+    passwordResetExpiresAt: {
+        type: Date,
+        select: false
+    },
+    passwordResetRequestedAt: {
+        type: Date,
+        select: false
+    },
+    passwordChangedAt: {
+        type: Date
+    },
+    tokenVersion: {
+        type: Number,
+        default: 0,
+        min: 0
     }
 }, { timestamps: true });
 

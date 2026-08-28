@@ -23,6 +23,14 @@ const adminSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    passwordChangedAt: {
+        type: Date
+    },
+    tokenVersion: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
     role:{
         type: String,
         enum: [ADMIN_ROLE],

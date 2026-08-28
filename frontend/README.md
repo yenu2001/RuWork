@@ -17,6 +17,12 @@ RuWork stores the Phase 2 bearer access token and its decoded display claims in 
 
 JWT payload decoding is used only to restore display identity and choose frontend routes; it does not verify the JWT signature. The backend remains authoritative for authentication, eligibility, authorization, and account status.
 
+Phase 10 adds server-side revocation. Access tokens carry a `tv` revocation claim that the backend compares against the account's stored version on every authenticated request, so a password change or a sign-out invalidates issued tokens rather than relying on the browser discarding them. Signing out calls the API's logout endpoint first and clears local state regardless of the result. If the API rejects a stored token with `401`, the shared Axios client clears the session and the app returns the user to sign-in instead of leaving a workspace that can no longer load data.
+
+## Deployment
+
+The production build in `dist/` is a single-page application. The host must rewrite unknown paths to `index.html` so deep links such as `/reset-password?token=…`, `/jobs/:id`, and the role workspaces resolve. Set `VITE_API_BASE_URL` at build time to the public API base URL for that environment, and add that site origin to the backend's `CLIENT_URL`/`CORS_ORIGINS` allowlist.
+
 ## Commands
 
 - `npm run dev` — start Vite with the local API proxy.
@@ -25,4 +31,4 @@ JWT payload decoding is used only to restore display identity and choose fronten
 - `npm run build` — produce the production bundle in `dist/`.
 - `npm run preview` — preview the production bundle.
 
-Full dashboards, jobs, applications, reviews, messages, notifications, and payment processing are intentionally outside Phase 3.
+Payment processing is permanently out of scope: RuWork records agreed prices but never collects, holds, or transfers money.

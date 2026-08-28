@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
 import { getVerificationExpiryMinutes } from "./emailVerification.js";
+import { getResetExpiryMinutes } from "./password.js";
 
 let transporter;
 
@@ -47,12 +48,18 @@ function getTransporter() {
     return transporter;
 }
 
+function getClientBaseUrl() {
+    return (process.env.CLIENT_URL || "http://localhost:5173").trim().replace(/\/$/, "");
+}
+
 function buildVerificationUrl(token, accountType) {
-    const clientUrl = (process.env.CLIENT_URL || "http://localhost:5173")
-        .trim()
-        .replace(/\/$/, "");
     const query = new URLSearchParams({ token, type: accountType });
-    return `${clientUrl}/verify-email?${query.toString()}`;
+    return `${getClientBaseUrl()}/verify-email?${query.toString()}`;
+}
+
+function buildPasswordResetUrl(token, accountType) {
+    const query = new URLSearchParams({ token, type: accountType });
+    return `${getClientBaseUrl()}/reset-password?${query.toString()}`;
 }
 
 export const emailDelivery = {
@@ -76,7 +83,30 @@ export const emailDelivery = {
                 "If you did not register for RuWork, you may safely ignore this email."
             ].join("\n")
         });
+    },
+
+    async sendPasswordResetEmail({ recipient, recipientName, token, accountType }) {
+        const configuration = getEmailConfiguration();
+        const resetUrl = buildPasswordResetUrl(token, accountType);
+        const expiryMinutes = getResetExpiryMinutes();
+        const greetingName = recipientName?.trim() || "RuWork user";
+
+        await getTransporter().sendMail({
+            from: configuration.from,
+            to: recipient,
+            subject: "Reset your RuWork password",
+            text: [
+                `Hello ${greetingName},`,
+                "",
+                "A password reset was requested for your RuWork account.",
+                `Reset your password by opening this link: ${resetUrl}`,
+                "",
+                `This link expires in ${expiryMinutes} minutes and can be used only once.`,
+                "Resetting your password signs out every existing RuWork session.",
+                "If you did not request this, you may safely ignore this email and your password will remain unchanged."
+            ].join("\n")
+        });
     }
 };
 
-export { buildVerificationUrl };
+export { buildVerificationUrl, buildPasswordResetUrl };
