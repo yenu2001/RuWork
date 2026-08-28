@@ -26,11 +26,19 @@ const originalSettingsFindOne = PlatformSetting.findOne;
 
 export class AdminInputError extends Error {}
 
-export function adminPagination(query = {}, defaultLimit = 20) {
-    const page = query.page === undefined ? 1 : Number(query.page);
-    const limit = query.limit === undefined ? defaultLimit : Number(query.limit);
-    if (!Number.isInteger(page) || page < 1 || page > 10000 || !Number.isInteger(limit) || limit < 1 || limit > 50) {
-        throw new AdminInputError("Pagination requires a page from 1 to 10000 and a limit from 1 to 50");
+// Repeated query keys arrive as arrays and single-element arrays coerce through Number(),
+// so pagination accepts only scalar input before any numeric check.
+function paginationNumber(value, fallback) {
+    if (value === undefined) return fallback;
+    if (typeof value !== "string" && typeof value !== "number") return NaN;
+    return Number(value);
+}
+
+export function adminPagination(query = {}, defaultLimit = 20, { maxPage = 10000 } = {}) {
+    const page = paginationNumber(query.page, 1);
+    const limit = paginationNumber(query.limit, defaultLimit);
+    if (!Number.isInteger(page) || page < 1 || page > maxPage || !Number.isInteger(limit) || limit < 1 || limit > 50) {
+        throw new AdminInputError(`Pagination requires a page from 1 to ${maxPage} and a limit from 1 to 50`);
     }
     return { page, limit };
 }

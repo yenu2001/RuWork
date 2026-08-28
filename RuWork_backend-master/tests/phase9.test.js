@@ -15,6 +15,7 @@ import {
     approveRegistration,
     getAdminDashboard,
     listAdminAudits,
+    listRegistrations,
     moderateJob,
     moderateProvider,
     moderateReview,
@@ -305,6 +306,35 @@ test("Audit listing is bounded, Admin-only by route design, and returns server f
         assert.equal(res.body.audits[0].admin.email, "admin@example.com");
         assert.equal("password" in res.body.audits[0].admin, false);
     } finally { [AdminAudit.find, AdminAudit.countDocuments] = originals; }
+});
+
+test("the merged registration queue is bounded, ordered newest-first, and rejects unsafe pagination", async () => {
+    const originals = [User.find, JobProvider.find, User.countDocuments, JobProvider.countDocuments];
+    const older = student({ _id: new mongoose.Types.ObjectId(), accountStatus: "pending" });
+    const newer = provider({ _id: new mongoose.Types.ObjectId(), accountStatus: "pending" });
+    older.createdAt = new Date("2026-01-01T00:00:00.000Z");
+    newer.createdAt = new Date("2026-06-01T00:00:00.000Z");
+    let studentQuery;
+    User.find = (value) => { studentQuery = value; return queryResult([older.toObject()]); };
+    JobProvider.find = () => queryResult([newer.toObject()]);
+    User.countDocuments = async () => 30;
+    JobProvider.countDocuments = async () => 12;
+    try {
+        const listed = response();
+        await listRegistrations({ query: { status: "pending", page: "1", limit: "20" } }, listed);
+        assert.equal(listed.statusCode, 200);
+        assert.deepEqual(studentQuery, { accountStatus: "pending" });
+        assert.deepEqual(listed.body.pagination, { page: 1, limit: 20, total: 42, pages: 3 });
+        assert.equal(listed.body.registrations[0].type, "jobProvider");
+        assert.equal(listed.body.registrations[1].type, "student");
+        assert.equal("password" in listed.body.registrations[0], false);
+
+        for (const query of [{ limit: "500" }, { page: "0" }, { page: "201" }, { page: ["2"] }]) {
+            const rejected = response();
+            await listRegistrations({ query: { status: "pending", ...query } }, rejected);
+            assert.equal(rejected.statusCode, 400, JSON.stringify(query));
+        }
+    } finally { [User.find, JobProvider.find, User.countDocuments, JobProvider.countDocuments] = originals; }
 });
 
 test("Phase 9 Admin routes cover every workspace domain without public mutation routes", () => {

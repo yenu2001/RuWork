@@ -37,6 +37,9 @@ import { JOB_STATUSES } from "../utils/job.js";
 import { recalculateReviewAggregates } from "../utils/ratingAggregates.js";
 
 const REGISTRATION_TYPES = ["student", "jobProvider"];
+// The merged Student/Provider queue reads offset + limit documents per collection, so its
+// page bound stays well below the generic Admin listing bound.
+const REGISTRATION_MAX_PAGE = 200;
 const ORIGINAL_COUNTS = new Map([
     [User, User.countDocuments], [JobProvider, JobProvider.countDocuments], [Job, Job.countDocuments],
     [Application, Application.countDocuments], [Review, Review.countDocuments],
@@ -191,34 +194,44 @@ export async function listRegistrations(req, res) {
             return res.status(400).json({ error: filters.error });
         }
 
-        const queries = [];
+        const { page, limit } = adminPagination(req.query, 20, { maxPage: REGISTRATION_MAX_PAGE });
+        const offset = (page - 1) * limit;
+        const accountFilter = { accountStatus: filters.status };
+        const sources = [];
         if (!filters.type || filters.type === "student") {
-            queries.push(
-                User.find({ accountStatus: filters.status })
-                    .then((students) => students.map(serializeStudentRegistration))
-            );
+            sources.push({ Model: User, serialize: serializeStudentRegistration });
         }
 
         if (!filters.type || filters.type === "jobProvider") {
-            queries.push(
-                JobProvider.find({ accountStatus: filters.status })
-                    .then((providers) => providers.map(serializeJobProviderRegistration))
-            );
+            sources.push({ Model: JobProvider, serialize: serializeJobProviderRegistration });
         }
 
-        const registrations = (await Promise.all(queries))
-            .flat()
+        // Two collections back one merged queue, so each source is read only as far as the
+        // requested page can reach before the merged newest-first slice is taken.
+        const results = await Promise.all(sources.map(async ({ Model, serialize }) => {
+            const [accounts, total] = await Promise.all([
+                Model.find(accountFilter).sort({ createdAt: -1 }).limit(offset + limit).lean().exec(),
+                Model.countDocuments(accountFilter)
+            ]);
+            return { registrations: accounts.map(serialize), total: Number(total) || 0 };
+        }));
+
+        const total = results.reduce((sum, result) => sum + result.total, 0);
+        const registrations = results
+            .flatMap((result) => result.registrations)
             .sort((left, right) =>
                 new Date(right.registeredAt || 0) - new Date(left.registeredAt || 0)
-            );
+            )
+            .slice(offset, offset + limit);
 
         return res.json({
             filters: { status: filters.status, type: filters.type || "all" },
             count: registrations.length,
-            registrations
+            registrations,
+            pagination: { page, limit, total, pages: total ? Math.ceil(total / limit) : 0 }
         });
     } catch (error) {
-        return res.status(500).json({ error: "Registration listing failed" });
+        return adminError(res, error, "Registration listing failed");
     }
 }
 

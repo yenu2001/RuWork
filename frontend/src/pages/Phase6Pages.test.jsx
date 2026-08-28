@@ -137,9 +137,9 @@ describe("Phase 6 role workspaces", () => {
     adminService.getRegistrations.mockResolvedValue({ registrations: [] });
     router(<RegistrationReviewsPage />);
     expect(await screen.findByText("No matching registrations")).toBeInTheDocument();
-    expect(adminService.getRegistrations).toHaveBeenCalledWith({ status: "pending", type: undefined });
+    expect(adminService.getRegistrations).toHaveBeenCalledWith({ status: "pending", type: undefined, page: 1, limit: 20 });
     fireEvent.click(screen.getByRole("button", { name: "Job Providers" }));
-    await waitFor(() => expect(adminService.getRegistrations).toHaveBeenLastCalledWith({ status: "pending", type: "jobProvider" }));
+    await waitFor(() => expect(adminService.getRegistrations).toHaveBeenLastCalledWith({ status: "pending", type: "jobProvider", page: 1, limit: 20 }));
   });
 
   it("requires confirmation before approving and immediately shows the updated registration", async () => {

@@ -37,11 +37,13 @@ RuWork_backend-master/
 |  `- authMiddleware.js
 |- models/
 |  |- admin.js
+|  |- adminAudit.js
 |  |- application.js
 |  |- job.js
 |  |- jobProvider.js
 |  |- message.js
 |  |- notification.js
+|  |- platformSetting.js
 |  |- review.js
 |  `- user.js
 |- routes/
@@ -58,10 +60,12 @@ RuWork_backend-master/
 |  `- README.md
 |- utils/
 |  |- account.js
+|  |- admin.js
 |  |- application.js
 |  |- communication.js
 |  |- emailService.js
 |  |- emailVerification.js
+|  |- job.js
 |  |- ratingAggregates.js
 |  `- review.js
 |- index.js
@@ -81,6 +85,8 @@ The misspelled `middlewears/` directory is retained for compatibility.
 - `Review`: one active Review per completed Application, with authoritative Job/Student/Provider references, an integer 1–5 rating, optional bounded plain-text comment, and timestamps.
 - `Message`: immutable Student/Provider sender and receiver discriminators/IDs, mandatory authoritative Job/Application context, bounded plain-text content, optional explicitly shared Student profile contact number, read state, and timestamps.
 - `Notification`: immutable typed Student/Provider recipient, bounded safe message, optional related Job/Application/Message references, read state, and timestamps.
+- `AdminAudit`: fully immutable server-authored record of one Admin decision — Admin identity, enumerated action, enumerated target type, target ID, size-bounded metadata, and a server `createdAt` with no `updatedAt`.
+- `PlatformSetting`: a single `singletonKey: "platform"` document holding the three typed, allowlisted business-policy booleans plus the Admin who last changed them.
 
 ### Current routes and controllers
 
@@ -104,7 +110,12 @@ The misspelled `middlewears/` directory is retained for compatibility.
 - Admin-only `GET /api/admin/dashboard` in addition to the registration-review routes.
 - Eligible-Student `POST /api/reviews`, `GET /api/reviews/my/application/:applicationId`, and `DELETE /api/reviews/:id`.
 - Public paginated `GET /api/jobs/:jobId/reviews` and owning-Provider `GET /api/jobProviders/reviews`.
-- Admin-only paginated `GET /api/admin/reviews` and `DELETE /api/admin/reviews/:id`.
+- Admin-only paginated `GET /api/admin/reviews`, `GET /api/admin/reviews/:id`, `PATCH /api/admin/reviews/:id/moderation`, and `DELETE /api/admin/reviews/:id`.
+- Admin-only paginated `GET /api/admin/students`, `GET /api/admin/students/:id`, and `PATCH /api/admin/students/:id/moderation`.
+- Admin-only paginated `GET /api/admin/providers`, `GET /api/admin/providers/:id`, and `PATCH /api/admin/providers/:id/moderation`.
+- Admin-only paginated `GET /api/admin/jobs`, `GET /api/admin/jobs/:id`, and `PATCH /api/admin/jobs/:id/moderation`.
+- Admin-only `GET /api/admin/settings` and `PATCH /api/admin/settings` over an allowlisted typed business-policy set.
+- Admin-only paginated, filterable, read-only `GET /api/admin/audits`.
 - Eligible-Student/approved-Provider `GET /api/messages/conversations`, `GET /api/messages/conversations/:applicationId`, `POST /api/messages`, and `GET /api/messages/unread-count`.
 - Eligible-Student/approved-Provider `GET /api/notifications`, `GET /api/notifications/unread-count`, `PATCH /api/notifications/read-all`, and `PATCH /api/notifications/:id/read`.
 
@@ -124,7 +135,7 @@ The misspelled `middlewears/` directory is retained for compatibility.
 
 - No password-reset, password-change, or access-token revocation strategy.
 - No health endpoint or integration tests against a live MongoDB/SMTP environment.
-- Full Admin account/Job moderation and settings, production security hardening, and optional email/realtime communication delivery remain deferred. Focused Admin Review moderation, role workspaces, database messaging, and in-app notifications are complete.
+- Production security hardening (CORS/Helmet/rate limiting, centralized error handling, logging) and optional email/realtime communication delivery remain deferred to Phase 10. Role workspaces, database messaging, in-app notifications, and the full Admin workspace — account/Job/Review moderation, expanded statistics, Settings, and audit records — are complete.
 
 ### Historical Phase 1 findings (resolved)
 
@@ -171,6 +182,7 @@ frontend/
 |- public/                   # public RuWork mark/favicon
 |- src/
 |  |- components/
+|  |  |- admin/            # moderation badge, reasoned moderation dialog, bounded pagination
 |  |  |- auth/              # role modal, registration sections, resend, route guard
 |  |  |- applications/      # apply/actions and Application status presentation
 |  |  |- common/            # buttons, inputs, alerts, logo, modal, loading, toast support
@@ -180,7 +192,9 @@ frontend/
 |  |  `- workspace/         # reusable role-workspace statistics and account-status badges
 |  |- context/              # authentication and lightweight toast state
 |  |- pages/
-|  |  |- admin/             # dashboard, Registration Reviews, focused Review moderation
+|  |  |- admin/             # dashboard, Registration Reviews/details, Student and Provider
+|  |  |                     # administration/details, Job moderation/inspection, Review
+|  |  |                     # moderation, Settings, and the read-only Audit Trail
 |  |  |- auth/              # login, registration, verification, account states
 |  |  |- jobs/              # public browse and Job Details
 |  |  |- messages/          # shared Student/Provider responsive inbox and threads
@@ -223,7 +237,29 @@ Preserve all current company and contact fields. `companyEmail` is the canonical
 
 ### Admin
 
-Preserve the existing Admin model and `admin` role. Public registration is unavailable. Initial Admin accounts are provisioned with `npm run create-admin` using ignored environment variables; the script validates input, prevents duplicate Admin emails, hashes passwords, and never prints plaintext passwords. A later phase may add finer permissions and audit metadata.
+Preserve the existing Admin model and `admin` role. Public registration is unavailable. Initial Admin accounts are provisioned with `npm run create-admin` using ignored environment variables; the script validates input, prevents duplicate Admin emails, hashes passwords, and never prints plaintext passwords. Phase 9 adds the separate `AdminAudit` record rather than embedding audit metadata in the Admin document; finer-grained Admin permissions remain a possible later addition.
+
+### AdminAudit
+
+Phase 9 adds an append-only audit document. Every field — `adminId`, `action`, `entityType`, `entityId`, and `metadata` — is `immutable`, and the schema carries `createdAt` only. `action` is constrained to twelve values (`REGISTRATION_APPROVED`, `REGISTRATION_REJECTED`, `STUDENT_SUSPENDED`, `STUDENT_RESTORED`, `PROVIDER_SUSPENDED`, `PROVIDER_RESTORED`, `JOB_HIDDEN`, `JOB_RESTORED`, `REVIEW_HIDDEN`, `REVIEW_RESTORED`, `REVIEW_DELETED`, `SETTINGS_UPDATED`) and `entityType` to six (`registration`, `student`, `jobProvider`, `job`, `review`, `settings`). A validator caps serialized `metadata` at 1500 characters.
+
+The Admin identity is always read from the verified JWT subject, never from the request body, and `createAdminAudit` re-validates both ObjectIds and both enumerations before writing. There is no audit create, update, or delete API; the only exposure is the bounded Admin-only listing. Newest-first, per-Admin, and per-target indexes support that listing.
+
+### PlatformSetting
+
+Phase 9 adds a single-document settings collection keyed by an immutable `singletonKey: "platform"`. It stores exactly three typed booleans — `studentRegistrationOpen`, `providerRegistrationOpen`, and `jobPostingOpen` — plus `updatedBy` and timestamps. There is no arbitrary key/value store: the update endpoint rejects any field outside the allowlist and any value that is not a literal boolean.
+
+No secret, credential, or infrastructure value is stored here. JWT signing material, MongoDB credentials, SMTP credentials, and Admin provisioning values remain environment-only, and the Settings page states this explicitly. Settings are read server-side by Student registration, Provider registration, and Job creation, so a closed policy is enforced by the API rather than by hiding a frontend control.
+
+### Moderation fields
+
+Phase 9 extends four existing schemas with a small, uniform, reversible moderation block rather than adding new state machines:
+
+- `User` and `JobProvider` gain `moderationStatus` (`active | suspended`, default `active`), `moderationReason`, `moderatedAt`, and `moderatedBy`.
+- `Job` gains `moderationStatus` (`visible | hidden`, default `visible`), the same three review fields, and a separate `providerSuspendedAt` stamp that is maintained by Provider suspension rather than by direct Job moderation.
+- `Review` gains `moderationStatus` (`active | hidden`, default `active`) and the same three review fields.
+
+Every moderation state is reversible and no moderation path deletes a record. Suspended accounts, hidden Jobs, and hidden Reviews retain their Applications, Messages, Reviews, and history intact.
 
 ### Job
 
@@ -298,8 +334,8 @@ Providers are not subject to the University email-domain rule.
 ### Login and JWT
 
 - Student login normalizes the email and verifies the password.
-- A Student receives normal access only if email/university/role eligibility remains valid, `isEmailVerified` is true, and `accountStatus` is `approved`.
-- Provider login uses `companyEmail`, verifies the password, and requires both `isEmailVerified = true` and `accountStatus = approved`.
+- A Student receives normal access only if email/university/role eligibility remains valid, `isEmailVerified` is true, `accountStatus` is `approved`, and the account is not suspended by Admin moderation.
+- Provider login uses `companyEmail`, verifies the password, and requires `isEmailVerified = true`, `accountStatus = approved`, and no Admin suspension.
 - Admin login is separate and has no public Admin signup.
 - Issued JWTs include the account ID, canonical email, and role, have a configured expiry, and are signed with `process.env.JWT_SECRET`.
 - Protected routes reject absent, malformed, expired, or invalid tokens with `401`.
@@ -315,7 +351,9 @@ Student or Job Provider registers
 -> accountStatus: approved or rejected
 ```
 
-Email verification is distinct from approval for both account types. Approval endpoints are Admin-only, validate state transitions, record reviewer/timestamps, and never expose password or token hashes.
+Email verification is distinct from approval for both account types. Approval endpoints are Admin-only, validate state transitions, record reviewer/timestamps, write an immutable audit record, and never expose password or token hashes.
+
+Approval is separate from moderation. An approved account may later be reversibly suspended, and a restored account returns to its existing approval state rather than re-entering the review queue.
 
 ## 6. Student eligibility
 
@@ -324,8 +362,9 @@ Only a Student who satisfies every server-side rule may receive normal Student a
 - role is `student`;
 - normalized email domain is exactly `ruh.ac.lk`;
 - university is exactly `University of Ruhuna`;
-- `isEmailVerified` is true; and
-- `accountStatus` is `approved`.
+- `isEmailVerified` is true;
+- `accountStatus` is `approved`; and
+- `moderationStatus` is not `suspended`.
 
 The application endpoint must re-check these conditions instead of trusting an old frontend state or hidden button.
 
@@ -339,12 +378,12 @@ The application endpoint must re-check these conditions instead of trusting an o
 - Student applications with eligibility checks and duplicate-application prevention.
 - Provider application decisions and provider ownership checks.
 - Provider edit/delete operations restricted to the provider's own jobs.
-- Admin moderation through Admin-only endpoints.
+- Admin moderation through Admin-only endpoints: reversible Job hiding, Provider suspension that hides owned Jobs, and preserved Application history in both cases.
 
 ## 8. Reviews and ratings
 
 - Reviews attach to a completed job engagement, Student `User`, and Job Provider.
-- Rating is constrained to whole numbers from 1–5; Students can create/delete only their own eligible Reviews, while Admins can remove inappropriate Reviews and Providers have view-only access.
+- Rating is constrained to whole numbers from 1–5; Students can create/delete only their own eligible Reviews, while Providers have view-only access. Admins can reversibly hide and restore a Review through moderation, and retain the Phase 7 permanent deletion for content that must not persist. Both Admin paths write an audit record and recalculate both aggregates.
 - Job-list/search responses expose only `averageRating` and `reviewCount`.
 - On desktop job cards, the aggregate rating is displayed on the right side of the card.
 - Individual comments are retrieved only from the selected Job Details page through a separate paginated review endpoint.
@@ -422,6 +461,8 @@ The supplied board contains grayscale wireframes for early flows, a basic `RuAdm
 - Reviews
 - Settings
 
+The seven entries above are the Admin navigation. Phase 9 also adds detail and activity views reached from them rather than from the navigation bar: Student and Job Provider account details, Job inspection, Registration details, and the full Audit Trail at `/admin/audits`, linked from both the Dashboard activity card and the Settings audit section.
+
 ## 12. Development phases
 
 1. **Backend foundation repair (completed):** documented the existing system; added environment configuration and ignore rules; removed hardcoded secrets; repaired provider email/role bugs; added approval and Student academic/eligibility schema preparation; disabled public Admin registration; restored protected-route JWT/RBAC behavior; and verified the foundation.
@@ -432,8 +473,8 @@ The supplied board contains grayscale wireframes for early flows, a basic `RuAdm
 6. **Role workspaces (completed):** live Student/Provider/Admin dashboards, Student Job History, Student and Company Profile management, responsive role navigation, current-company identity synchronization, essential Admin Registration Reviews/decisions, and authorization/ownership verification.
 7. **Reviews and ratings (completed):** completed-engagement review rules, per-Job and mandatory Provider aggregates, lightweight job-card summaries, paginated Job Details comments, Student creation/deletion, focused Provider/Admin views, moderation, and tests.
 8. **Messaging and notifications (completed):** Application-authorized direct Messages, explicit Student contact sharing, bounded conversation/history APIs, persistent lifecycle/Message Notifications, read/unread state and badges, shared responsive role pages, and tests. Realtime and email delivery remain optional later enhancements.
-9. **Full Admin workspace:** account/Job/Application moderation beyond the completed Registration Review and focused Review-moderation workflows, expanded statistics, settings, audit records, and strict Admin authorization.
-10. **Production hardening and live integration:** validation consistency, centralized error handling, password reset/change if required, CORS/Helmet/rate limiting, logging without secrets, security/a11y/performance testing, deployment/live MongoDB/SMTP configuration, seed/demo tooling, and documentation.
+9. **Full Admin workspace (completed):** reversible Student/Provider/Job/Review moderation beyond the existing Registration Review workflow, expanded authoritative statistics, allowlisted business-policy Settings, immutable audit records, strict Admin-only authorization on every endpoint, a responsive Admin workspace, and tests.
+10. **Production hardening and live integration:** validation consistency, centralized error handling, password reset/change if required, access-token revocation, CORS/Helmet/rate limiting, logging without secrets, a health endpoint, replacing the `mongoose.connection.readyState === 0` test-support short-circuit in `utils/admin.js` with injected test doubles or an explicit environment gate, security/a11y/performance testing, deployment/live MongoDB/SMTP configuration and integration testing, seed/demo tooling, and documentation.
 
 ## Phase 1 verification criteria (completed)
 
@@ -548,13 +589,96 @@ The supplied board contains grayscale wireframes for early flows, a basic `RuAdm
 - A temporary in-memory API exercised Student and Provider sign-in, desktop/mobile inboxes, thread history, sending, explicit Student contact sharing, Provider contact restrictions, Notifications, contextual navigation, mark-all-read, and immediate badge synchronization without modifying MongoDB. Both roles rendered meaningful content at desktop and 390×844, with no console errors, Vite overlay, or horizontal overflow.
 - Live MongoDB/SMTP delivery is not claimed without configured external credentials. Model/controller integration is verified with deterministic automated tests, and the temporary browser API is removed after verification.
 
-## Technology and language audit after Phase 8
+## Phase 9 implementation status
+
+### Models and shared utilities
+
+- Added the append-only `AdminAudit` model and the single-document `PlatformSetting` model, plus a shared `utils/admin.js` holding the moderation/action/entity enumerations, Settings defaults and allowlist, bounded pagination, bounded search, regex escaping, the moderation-reason rule, the strict field allowlist check, the audit writer, and the Settings reader.
+- Extended `User`, `JobProvider`, `Job`, and `Review` with the uniform reversible moderation block described in §3, and added `Job.providerSuspendedAt` so Provider suspension can hide owned Jobs without touching each Job's own moderation state. Supporting compound indexes were added for each moderated collection.
+
+### Admin Dashboard
+
+- `GET /api/admin/dashboard` returns authoritative counts computed by the database: Student and Provider totals split across approved/pending/rejected/suspended; Job totals split across draft/open/closed/archived/hidden; one count per Application lifecycle status; Review total/visible/hidden; the pending registration queue; and the six most recent audit records.
+- Communication is reported as `messages` and `notifications` counts only. No Message content, participant, thread, or Application-level Message detail is exposed anywhere in the Admin API or UI, and no Admin Message route exists.
+- The frontend renders every group with loading, retryable-error, and empty states, and keeps a fallback renderer for the pre-Phase-9 summary-only response shape.
+
+### Registration Reviews
+
+- The existing Phase 2 approve/reject controller is reused unchanged in its decision logic; Phase 9 added the strict body allowlist, audit integration, and pagination around it. Approval still requires a verified email, repeated or nonsensical transitions still return `409`, and rejection still accepts a trimmed reason of up to 500 characters.
+- The merged Student/Provider queue is now bounded. Each collection is read newest-first only as far as the requested page can reach, both totals are counted, and the merged list is sorted and sliced to the page. The page bound for this endpoint is 200 because two collections back one queue; the generic Admin listings keep the 10000 bound. The response adds `pagination` alongside the existing `filters`, `count`, and `registrations` fields, and the Registration Reviews page paginates and resets to page one whenever a filter changes.
+- Responses remain the sanitized allowlisted serializers; password and verification-token fields are never present.
+
+### Student and Job Provider administration
+
+- Added paginated, searchable, filterable Admin listings, sanitized detail endpoints, and reversible `active ⇄ suspended` moderation for both account types. Search is bounded to 80 characters and escaped before use in a case-insensitive regex; filters are validated against fixed allowlists.
+- Suspension requires a 5–500 character reason; restoration does not. Repeating the current state returns `409`.
+- Enforcement is server-side and authoritative: `requireEligibleRuhunaStudent` and `requireApprovedJobProvider` both reject a suspended account, and Student and Provider login reject one as well. A suspended account keeps every Application, Review, Message, and Notification it already had.
+- Suspending a Provider stamps `providerSuspendedAt` on all of that Provider's Jobs, which removes them from public browse, public Job Details, and new Applications. Restoring the Provider clears the stamp. Both directions are compensated if the audit write fails.
+
+### Job moderation
+
+- Added an Admin-only paginated Job listing with lifecycle, moderation, archive, and escaped-search filters, an inspection endpoint, and reversible `visible ⇄ hidden` moderation with a required reason on hide.
+- Moderated Jobs are excluded from public browse, public Job Details, and Application creation. Provider-facing views still show the Job with its moderation state so the Provider is not silently confused.
+- A Provider cannot override moderation. All five moderation fields plus `providerSuspendedAt` are in the Job system-field list, `assertNoSystemFields` runs on both create and update, and the update path assigns only editable fields plus a validated status transition — so editing, publishing, closing, or reopening a Job cannot clear a hide.
+- Applications, Reviews, and Message history attached to a hidden Job are preserved. Phase 9 adds no Admin Job-deletion route; Option B Provider archiving remains the only removal path.
+
+### Review moderation
+
+- Added Admin-only reversible `active ⇄ hidden` Review moderation with a required reason on hide, alongside the retained Phase 7 permanent deletion.
+- Hidden Reviews are excluded from public Job Reviews, owning-Provider Reviews, and both rating aggregates. The shared aggregation helper filters on `moderationStatus` so a hide or restore immediately produces correct Job and Provider averages and counts, and the operation is compensated and re-recalculated if the audit write fails.
+- A Student cannot bypass moderation. There is no Student Review update API at all, and moderation fields are outside every writable set.
+
+### Settings
+
+- Added a Settings read/write pair over exactly three typed allowlisted booleans. Any other field, or any non-boolean value, is rejected with `400`. There is no arbitrary key/value capability and no secret or infrastructure value is stored.
+- Settings are authoritative server-side: Student registration, Provider registration, and Job creation each read the current Settings and refuse the action with an explicit code when the relevant policy is closed.
+- The singleton is created on first write, every change records a `{ from, to }` diff in an audit record, and a failed audit write removes a newly created singleton or restores the previous field values.
+
+### Audit records
+
+- Every Admin decision across registrations, Student moderation, Provider moderation, Job moderation, Review moderation, Review deletion, and Settings changes writes one audit record. Each writer is wrapped so a failed audit reverses the action it was recording rather than leaving an unaudited change.
+- The Admin identity is taken from the verified JWT subject, so a client cannot forge or reassign authorship, and the server supplies the timestamp. Records cannot be edited or deleted through any API.
+- Added a bounded, filterable, Admin-only `GET /api/admin/audits`, and a responsive read-only `/admin/audits` Audit Trail page with action and record-type filters, pagination, empty and retryable-error states, and no edit or delete controls. It is reached from the Dashboard activity card and from the Settings audit section; the Settings page keeps its own Settings-scoped history.
+
+### Authorization and security
+
+- `adminRouter` mounts `authenticateToken`, `isAdmin`, and `requireAdminAccount` above every route except `POST /api/admin/login`, so all twenty Admin endpoints require a valid token, an `admin` role claim, and a live re-read of the Admin record. Unauthenticated requests receive `401`; Student and Provider tokens receive `403`.
+- Every mutation validates its body against an explicit field allowlist, so system fields such as moderation state, review metadata, ownership, and timestamps cannot be mass-assigned or spoofed.
+- Malformed ObjectIds return `404` rather than a cast error, and missing records return `404`.
+- Every listing is bounded. Pagination accepts only scalar input before any numeric coercion, so repeated query keys that arrive as arrays are rejected rather than silently coerced; limits are capped at 50. All text filters are length-bounded and regex-escaped, and all enumerated filters are checked against fixed allowlists, so Mongo operator and query injection through Admin filters is not possible.
+- Public Admin registration remains unavailable, and no Admin endpoint exposes private Student–Provider Message content.
+
+### Verification
+
+- The complete suites pass **105/105 backend tests** and **86/86 frontend tests across 20 test files**. Phase 9 contributes 14 focused backend tests and 18 focused frontend tests, and extends the existing Phase 2 registration-listing test and Phase 6 Registration Reviews test to the paginated call shape.
+- All 47 backend JavaScript files pass `node --check`. Frontend ESLint passes with no errors or warnings, and the Vite production build succeeds. Both `npm audit` runs report zero vulnerabilities. No npm dependency was added in Phase 9.
+- A temporary in-memory Admin API exercised the complete browser flow without touching MongoDB. Admin login, the Dashboard, Registration Reviews with pagination and filter reset, Student and Provider administration, account details, Job moderation and inspection, Review moderation, Settings, and the Audit Trail all rendered meaningful data at 1440×900 desktop and 390×844 mobile. Reversible Student suspension and restoration were exercised end to end, including the required-reason confirmation dialog and the resulting audit records. Audit action and record-type filters, pagination, and the empty state behaved correctly, and no edit or delete control exists on that page. Every page reported no horizontal overflow, no Vite error overlay, and no console errors, and the mobile navigation toggle exposed all seven Admin destinations. The temporary API file was removed after verification, matching Phases 6–8.
+- Live MongoDB and SMTP behavior is not claimed without configured external credentials. Model and controller integration is verified with deterministic automated tests plus the temporary browser API.
+
+### Deliberate Phase 9 boundaries
+
+- No payment processing, payment status, or payment field of any kind was added.
+- No Admin access to private Student–Provider Messages was added; only counts are reported.
+- No destructive account deletion and no destructive Job deletion was added. All new moderation is reversible and history-preserving.
+- No arbitrary key/value or security-related Settings capability was added.
+- No public Admin signup was added.
+- No Phase 10 production-hardening work — CORS, Helmet, rate limiting, centralized error handling, password reset, or logging infrastructure — was added.
+
+### Known Phase 9 limitations
+
+- `createAdminAudit` and `getPlatformSettings` short-circuit when `mongoose.connection.readyState === 0` and the model method is still the original, which lets the credential-free test suite run without MongoDB. In a live deployment with a dropped connection this would return default Settings and skip an audit write rather than failing loudly. The practical exposure is small because the preceding document save fails first, but production code is shaped by a test need here. This behavior was intentionally left unchanged in Phase 9 and is carried into Phase 10 as a hardening item.
+- The merged registration queue reads `offset + limit` documents per collection, which is correct and bounded but is not index-only pagination. Its page bound is 200 for that reason.
+- Provider suspension hides the Provider's Jobs but intentionally does not hide Reviews already written about that Provider, because those Reviews are Student-authored history about completed engagements.
+- The Audit Trail is reachable from the Dashboard and Settings rather than from the seven-item Admin navigation, to keep the documented navigation stable.
+- Admin actions are audited, but there is no export, retention policy, or tamper-evident chaining over audit records.
+
+## Technology and language audit after Phase 9
 
 - Application code uses JavaScript and JSX only. CSS/Tailwind styling, JSON configuration, Markdown documentation, environment files, and static SVG/PNG/PDF assets are supporting formats rather than additional application languages.
 - No `.ts`, `.tsx`, `.py`, `.java`, `.cs`, `.php`, `.go`, `.rb`, or `.rs` application source exists outside dependency/build directories.
 - Frontend runtime stack: React, Vite, Tailwind CSS, React Router, Axios, and Lucide React. Frontend development/testing: ESLint, Vitest, React Testing Library, jsdom, Tailwind/Vite React plugins, and React type metadata used by editor/tooling.
 - Backend runtime stack: Node.js, Express, MongoDB/Mongoose, bcrypt, JSON Web Token, Nodemailer, dotenv, and the existing body-parser compatibility dependency. Nodemon is the existing development runner even though it is currently listed in runtime dependencies.
-- No new npm dependency was required for Phase 8. The responsive inbox, plain-text composer, Notification controls, and unread badges use React, native semantic controls, existing Tailwind utilities, and existing Lucide icons.
-- Both npm dependency audits report zero known vulnerabilities, and all backend JavaScript files pass `node --check`.
+- No new npm dependency was required for Phase 8 or Phase 9. The Admin workspace — moderation dialogs, badges, filters, pagination, Settings toggles, and the Audit Trail — uses React, native semantic controls, existing Tailwind utilities, and existing Lucide icons.
+- Both npm dependency audits report zero known vulnerabilities, and all 47 backend JavaScript files pass `node --check`.
 - `body-parser` is largely redundant with modern Express JSON parsing and `nodemon` would normally be a development dependency, but both predate Phase 6 and remain in use by the existing backend configuration; removing or relocating them was outside this incremental phase.
 - The repository remains compliant with the approved straightforward JavaScript/JSX + React/Vite/Tailwind/Axios frontend and JavaScript + Node/Express + MongoDB/Mongoose backend architecture.

@@ -33,6 +33,7 @@ import AdminAccountDetailsPage from "./pages/admin/AdminAccountDetailsPage";
 import AdminJobsPage from "./pages/admin/AdminJobsPage";
 import AdminJobDetailsPage from "./pages/admin/AdminJobDetailsPage";
 import AdminSettingsPage from "./pages/admin/AdminSettingsPage";
+import AdminAuditTrailPage from "./pages/admin/AdminAuditTrailPage";
 
 export default function App() {
   return (
@@ -87,6 +88,7 @@ export default function App() {
           <Route path="/admin/jobs/:id" element={<AdminJobDetailsPage />} />
           <Route path="/admin/reviews" element={<AdminReviewsPage />} />
           <Route path="/admin/settings" element={<AdminSettingsPage />} />
+          <Route path="/admin/audits" element={<AdminAuditTrailPage />} />
         </Route>
 
         <Route path="*" element={<NotFoundPage />} />

@@ -10,13 +10,15 @@ import AdminJobDetailsPage from "./admin/AdminJobDetailsPage";
 import AdminJobsPage from "./admin/AdminJobsPage";
 import AdminReviewsPage from "./admin/AdminReviewsPage";
 import AdminSettingsPage from "./admin/AdminSettingsPage";
+import AdminAuditTrailPage from "./admin/AdminAuditTrailPage";
+import RegistrationReviewsPage from "./admin/RegistrationReviewsPage";
 import { adminService } from "../services/adminService";
 import { dashboardService } from "../services/dashboardService";
 import { reviewService } from "../services/reviewService";
 import { AUTH_STORAGE_KEY } from "../utils/authStorage";
 import { renderWithProviders } from "../test/renderWithProviders";
 
-vi.mock("../services/adminService", () => ({ adminService: { getAccounts: vi.fn(), getAccount: vi.fn(), moderateAccount: vi.fn(), getJobs: vi.fn(), getJob: vi.fn(), moderateJob: vi.fn(), moderateReview: vi.fn(), getSettings: vi.fn(), updateSettings: vi.fn(), getAudits: vi.fn() } }));
+vi.mock("../services/adminService", () => ({ adminService: { getAccounts: vi.fn(), getAccount: vi.fn(), moderateAccount: vi.fn(), getJobs: vi.fn(), getJob: vi.fn(), moderateJob: vi.fn(), moderateReview: vi.fn(), getSettings: vi.fn(), updateSettings: vi.fn(), getAudits: vi.fn(), getRegistrations: vi.fn() } }));
 vi.mock("../services/dashboardService", () => ({ dashboardService: { getAdminDashboard: vi.fn() } }));
 vi.mock("../services/reviewService", () => ({ reviewService: { getAdminReviews: vi.fn() } }));
 
@@ -26,6 +28,7 @@ const job = { id: "job-1", jobTitle: "Research Assistant", companyName: "Current
 const review = { id: "review-1", rating: 5, comment: "Professional collaboration.", moderationStatus: "active", student: { firstName: "Yenulu", lastName: "Student" }, provider: { companyName: "Current Company" }, job: { jobTitle: "Research Assistant" }, createdAt: "2026-08-20" };
 const pagination = { page: 1, limit: 20, total: 21, pages: 2 };
 const settings = { studentRegistrationOpen: true, providerRegistrationOpen: true, jobPostingOpen: true };
+const audit = { id: "audit-1", action: "JOB_HIDDEN", entityType: "job", entityId: "job-1", metadata: { reason: "Unsafe listing" }, admin: { email: "admin@ruwork.lk" }, createdAt: "2026-08-28T00:00:00.000Z" };
 
 function fakeToken(role) { const encode = (value) => window.btoa(JSON.stringify(value)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_"); return `${encode({ alg: "HS256" })}.${encode({ sub: "one", role, exp: Math.floor(Date.now() / 1000) + 3600 })}.signature`; }
 function protectedAdmin(route, role) {
@@ -146,6 +149,41 @@ describe("Phase 9 Admin workspace", () => {
     fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "Abusive text" } });
     fireEvent.click(screen.getAllByRole("button", { name: "Hide" }).at(-1));
     expect(await screen.findByText("Review hidden successfully")).toBeInTheDocument();
+  });
+
+  it("paginates the merged registration queue and resets to page one when a filter changes", async () => {
+    adminService.getRegistrations.mockResolvedValue({ registrations: [{ ...student, type: "student" }], pagination: { page: 1, limit: 20, total: 42, pages: 3 } });
+    renderWithProviders(<RegistrationReviewsPage />, { role: "admin" });
+    expect(await screen.findByRole("heading", { name: "Yenulu Student" })).toBeInTheDocument();
+    await waitFor(() => expect(adminService.getRegistrations).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, limit: 20 })));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(adminService.getRegistrations).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2 })));
+    fireEvent.click(screen.getByRole("button", { name: "Job Providers" }));
+    await waitFor(() => expect(adminService.getRegistrations).toHaveBeenLastCalledWith(expect.objectContaining({ type: "jobProvider", page: 1 })));
+  });
+
+  it("filters, paginates, and reads the full Admin audit trail without edit controls", async () => {
+    adminService.getAudits.mockResolvedValue({ audits: [audit], pagination: { page: 1, limit: 20, total: 25, pages: 2 } });
+    renderWithProviders(<AdminAuditTrailPage />, { role: "admin" });
+    expect(await screen.findByText("Job hidden")).toBeInTheDocument();
+    expect(screen.getByText("Reason: Unsafe listing")).toBeInTheDocument();
+    expect(screen.getByText("admin@ruwork.lk")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Record type"), { target: { value: "review" } });
+    await waitFor(() => expect(adminService.getAudits).toHaveBeenLastCalledWith(expect.objectContaining({ entityType: "review", page: 1, limit: 20 })));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(adminService.getAudits).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2 })));
+    expect(screen.queryByRole("button", { name: /delete|edit/i })).not.toBeInTheDocument();
+  });
+
+  it("shows an empty and a retryable error state for the audit trail", async () => {
+    adminService.getAudits.mockResolvedValueOnce({ audits: [], pagination: { page: 1, pages: 0, total: 0 } });
+    const { unmount } = renderWithProviders(<AdminAuditTrailPage />, { role: "admin" });
+    expect(await screen.findByRole("heading", { name: "No matching audit records" })).toBeInTheDocument();
+    unmount();
+    adminService.getAudits.mockRejectedValue({ response: { data: { error: "Audit trail unavailable" } } });
+    renderWithProviders(<AdminAuditTrailPage />, { role: "admin" });
+    expect(await screen.findByText("Audit trail unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 
   it("updates only allowlisted Settings and exposes paginated audit activity", async () => {

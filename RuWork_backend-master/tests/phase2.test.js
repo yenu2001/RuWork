@@ -397,10 +397,18 @@ test("public Admin registration route remains unavailable", () => {
 test("Admin can list registrations without sensitive fields", async () => {
     const originalUserFind = User.find;
     const originalProviderFind = JobProvider.find;
+    const originalUserCount = User.countDocuments;
+    const originalProviderCount = JobProvider.countDocuments;
     const student = makeStudent();
     const provider = makeProvider();
-    User.find = async () => [student];
-    JobProvider.find = async () => [provider];
+    const registrationQuery = (result) => ({
+        sort() { return this; }, limit() { return this; }, lean() { return this; },
+        async exec() { return result; }
+    });
+    User.find = () => registrationQuery([student]);
+    JobProvider.find = () => registrationQuery([provider]);
+    User.countDocuments = async () => 1;
+    JobProvider.countDocuments = async () => 1;
 
     try {
         await withJwtSecret(async () => {
@@ -414,6 +422,7 @@ test("Admin can list registrations without sensitive fields", async () => {
 
             assert.equal(res.statusCode, 200);
             assert.equal(res.body.count, 2);
+            assert.deepEqual(res.body.pagination, { page: 1, limit: 20, total: 2, pages: 1 });
             for (const registration of res.body.registrations) {
                 assert.equal("password" in registration, false);
                 assert.equal("emailVerificationTokenHash" in registration, false);
@@ -423,6 +432,8 @@ test("Admin can list registrations without sensitive fields", async () => {
     } finally {
         User.find = originalUserFind;
         JobProvider.find = originalProviderFind;
+        User.countDocuments = originalUserCount;
+        JobProvider.countDocuments = originalProviderCount;
     }
 });
 
