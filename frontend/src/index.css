@@ -1,0 +1,108 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-50: #f5f3ff;
+  --color-brand-100: #ede9fe;
+  --color-brand-200: #ddd6fe;
+  --color-brand-300: #c4b5fd;
+  --color-brand-400: #a78bfa;
+  --color-brand-500: #7c3aed;
+  --color-brand-600: #5b36d6;
+  --color-brand-700: #4930ac;
+  --color-brand-800: #372580;
+  --color-brand-900: #271c57;
+  --color-ink-950: #131625;
+  --color-ink-800: #292d3d;
+  --color-ink-600: #5d6274;
+  --color-ink-400: #8f94a6;
+  --color-surface: #f8f8fc;
+  --font-sans: "Inter", "Segoe UI", system-ui, sans-serif;
+  --shadow-soft: 0 18px 60px -30px rgba(55, 37, 128, 0.3);
+  --shadow-card: 0 10px 30px -22px rgba(31, 35, 56, 0.35);
+}
+
+:root {
+  font-family: var(--font-sans);
+  color: var(--color-ink-950);
+  background: #ffffff;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #ffffff;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--color-brand-400) 65%, transparent);
+  outline-offset: 2px;
+}
+
+::selection {
+  color: white;
+  background: var(--color-brand-600);
+}
+
+@layer components {
+  .page-container {
+    @apply mx-auto w-full max-w-[1180px] px-5 sm:px-8 lg:px-10;
+  }
+
+  .surface-card {
+    @apply rounded-3xl border border-slate-200/80 bg-white shadow-card;
+  }
+
+  .eyebrow {
+    @apply inline-flex items-center gap-2 rounded-full bg-brand-50 px-3 py-1.5 text-xs font-bold tracking-[0.14em] text-brand-700 uppercase;
+  }
+
+  .field-control {
+    @apply min-h-12 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-[15px] text-ink-950 transition placeholder:text-slate-400 hover:border-slate-400 focus:border-brand-500 focus:ring-4 focus:ring-brand-100 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500;
+  }
+
+  .field-label {
+    @apply mb-1.5 block text-sm font-semibold text-ink-800;
+  }
+
+  .field-message {
+    @apply mt-1.5 text-xs leading-5;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
