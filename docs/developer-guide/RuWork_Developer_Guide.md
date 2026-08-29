@@ -20,6 +20,7 @@ Written for the RuWork development team — university students who know basic J
 | Working on the frontend | [02 — Frontend Complete Guide](02_RuWork_Frontend_Complete_Guide.md) |
 | Stuck on a keyword or symbol | [03 — Code Glossary](03_RuWork_Code_Glossary.md) |
 | Tracing one feature end to end | [04 — Request and Data Flows](04_RuWork_Request_and_Data_Flows.md) |
+| Putting RuWork on the internet | [05 — Deployment Guide](05_RuWork_Deployment_Guide.md) |
 | Preparing for a viva | 00 → 04 → 01 §§5–6, 19 → 03 |
 
 ---
@@ -42,6 +43,9 @@ A cheat sheet: JavaScript syntax (`?.`, `??`, spread, destructuring, async/await
 
 ### [04 — Request and Data Flows](04_RuWork_Request_and_Data_Flows.md)
 18 end-to-end flows as Mermaid diagrams plus plain-text fallbacks, each naming the exact page → service → endpoint → router → middleware → controller → utility → model chain. Ends with a complete verified endpoint reference.
+
+### [05 — Deployment Guide](05_RuWork_Deployment_Guide.md)
+Taking RuWork live on MongoDB Atlas + Render + Vercel, with the reasoning behind each choice — including why the Express backend must **not** go on Vercel's serverless platform. Covers SMTP setup, the circular `CLIENT_URL` ⇄ `VITE_API_BASE_URL` dependency, production Admin provisioning, free-tier gotchas, troubleshooting, and a pre-launch security checklist.
 
 ---
 
